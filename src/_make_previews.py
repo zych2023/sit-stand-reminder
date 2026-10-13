@@ -413,72 +413,6 @@ def _round_button_img(text, kind, accent, height=34, min_width=0,
     return img, Wk
 
 
-def _alert_preview(app, ss=3):
-    """离屏超采样渲染「到点提醒窗」，复现 `AlertWindow._render` 的布局。
-
-    坐标系约定：源码用的是**整窗坐标**（含 PAD 边距），卡片贴在 (PAD, PAD)。
-    这里统一换算到**卡片局部坐标**（减掉 PAD），避免两套坐标互相污染。
-    """
-    k = ss
-    W = S.px(356) * k
-    H = S.px(150) * k
-    P = S.px(10) * k
-
-    def PX(v):
-        """设计像素 → 卡片局部像素（减掉 PAD）。"""
-        return int(round(S.px(v) * k - P))
-
-    iw, ih = int(W - P * 2), int(H - P * 2)
-    card = S.aa_rounded_image(iw, ih, int(round(S.px(16) * k)),
-                              S.C_BG, S.C_BORDER, max(1, k), 4)
-    d = ImageDraw.Draw(card)
-
-    # 标题行：小色点 + 标题（源码里 dot 在整窗 (24, 32)）
-    dot_cx, dot_cy = PX(24), PX(32)
-    dr = int(round(S.px(4.5) * k))
-    d.ellipse([dot_cx - dr, dot_cy - dr, dot_cx + dr, dot_cy + dr],
-              fill=S.C_STAND)
-    f_title = _font(int(13 * k * 1.25), bold=True)
-    d.text((dot_cx + int(round(S.px(14) * k)), dot_cy - f_title.size * 0.60),
-           "该站起来了", font=f_title, fill=S.C_TEXT)
-
-    # 副标题（源码在整窗 (24, 54)，宽度 iw - 56）
-    f_sub = _font(int(9 * k * 1.25))
-    sub = "您已连续坐姿 45 分钟，起身活动 8 分钟。"
-    max_w = iw - int(round(S.px(56) * k))
-    d.text((PX(24), PX(54)), _wrap(d, sub, f_sub, max_w),
-           font=f_sub, fill=S.C_TEXT2)
-
-    # 关闭叉（源码在整窗 (x1-21, y0+21)，x1 = W - PAD）
-    cxc, cyc = iw - PX(21), PX(21)
-    arm = int(round(S.px(4.5) * k))
-    lw = max(1, int(round(1.6 * k)))
-    d.line([cxc - arm, cyc - arm, cxc + arm, cyc + arm],
-           fill=S.C_MUTED, width=lw)
-    d.line([cxc - arm, cyc + arm, cxc + arm, cyc - arm],
-           fill=S.C_MUTED, width=lw)
-
-    # 三个按钮（源码：by = y1 - 12 - 34，bx = x0 + 20）
-    b1, w1 = _round_button_img("我已站起", "primary", S.C_STAND,
-                               height=34, min_width=112, k=k)
-    b2, w2 = _round_button_img("稍后 %d 分钟" % app.cfg["snooze_minutes"],
-                               "ghost", None, height=34, min_width=104, k=k)
-    b3, w3 = _round_button_img("跳过", "ghost", None,
-                               height=34, min_width=70, k=k)
-    bx = PX(20)
-    by = ih - PX(12) - int(round(S.px(34) * k))
-    gap_a = int(round(S.px(8) * k))
-    gap_b = int(round(S.px(16) * k))
-    card.alpha_composite(b1, (bx, by))
-    card.alpha_composite(b2, (bx + w1 + gap_a, by))
-    card.alpha_composite(b3, (bx + w1 + w2 + gap_b, by))
-
-    # 贴进整窗
-    full = Image.new("RGBA", (int(W), int(H)), (0, 0, 0, 0))
-    full.alpha_composite(card, (int(P), int(P)))
-    return full
-
-
 def _wrap(draw, text, font, max_w):
     """按像素宽度手动折行（中文逐字断行）。"""
     lines, cur = [], ""
@@ -559,16 +493,36 @@ def shots(app, root):
     print("saved %-22s %s" % ("strip-collapsed.png", sheet.size))
 
     # =====================================================================
-    # 3. 到点提醒窗（离屏超采样渲染）
+    # 3. 到点提醒窗（抓真实窗口 + 放大）
+    #
+    # ⚠️ 这里**不再离屏重画**。
+    #
+    # 曾经用 Pillow 复现 `AlertWindow._render` 的布局，但提醒窗的元素密度远高于
+    # 悬浮条：标题 + 副标题 + 关闭叉 + 三个不同 min_width 的按钮挤在 356×150 里，
+    # 任何一处字号/行高/间距的换算偏差都会让整张图的比例失真
+    # （实测出现过「按钮高得离谱、正文与按钮之间空出一大块」的丑图）。
+    #
+    # 改为直接 PrintWindow 抓真实窗口再放大 —— 抓到的就是屏幕上那个样子，
+    # 布局零偏差。代价是圆角边缘略有一点台阶（窗口内贴图经 flatten_to_key
+    # 压平过，没有过渡像素），4 倍放大下几乎看不出来，远好于比例失真。
     # =====================================================================
     app.mode = "sit"
-    alert_img = _alert_preview(app, ss=3)
-    pad = 20
-    sheet = Image.new("RGBA", (alert_img.width + pad * 2,
-                              alert_img.height + pad * 2), BG + (255,))
-    sheet.alpha_composite(alert_img, (pad, pad))
-    sheet.convert("RGB").save(os.path.join(OUT, "alert.png"))
-    print("saved %-22s %s" % ("alert.png", sheet.size))
+    aw = app.alert_win
+    aw.show("该站起来了", "您已连续坐姿 45 分钟，起身活动 8 分钟。",
+            "我已站起", S.C_STAND, "up")
+    pump(root, 0.6)
+    alert_w = aw.top
+    alert_w.update_idletasks()
+    aww, awh = alert_w.winfo_width(), alert_w.winfo_height()
+    alert_w.geometry("+%d+%d" % (OFF, OFF))
+    pump(root, 0.5)
+    ret, im = grab_window(hwnd_of(alert_w), aww, awh)
+    print("  alert PrintWindow ret =", ret, aww, awh)
+    _save(im, "alert.png", zoom=4)
+    try:
+        aw.hide()
+    except Exception:
+        pass
 
     # =====================================================================
     # 4. 设置窗口
