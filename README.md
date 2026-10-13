@@ -14,11 +14,11 @@
 三个时长均可调整。设计取向可以概括为一句话：**免安装、离线、启动快；默认静音、默认不遮挡；到点一定提醒到你，且操作入口当场就在眼前。**
 
 <p align="center">
-  <img src="previews/strip-expanded.png" width="600" alt="悬浮细条 · 展开态">
+  <img src="previews/strip-expanded.png" width="236" alt="悬浮细条 · 展开态">
 </p>
 
 <p align="center">
-  <sub><b>悬浮细条 · 展开态</b>：状态点 + 精确倒计时 + 进度条 + 快捷操作按钮</sub>
+  <sub><b>悬浮细条 · 展开态</b>：状态点 + 精确倒计时 + 进度条 + 快捷操作按钮（上图与实际显示尺寸一致）</sub>
 </p>
 
 <br>
@@ -28,17 +28,17 @@
 </p>
 
 <p align="center">
-  <sub><b>悬浮细条 · 收起态</b>：默认贴靠屏幕边缘，按状态色自下而上填充剩余进度</sub>
+  <sub><b>悬浮细条 · 收起态</b>：默认贴靠屏幕边缘，按状态色自下而上填充剩余进度（三种剩余时间对照示意）</sub>
 </p>
 
 <br>
 
 <p align="center">
-  <img src="previews/alert.png" width="600" alt="到点提醒窗">
+  <img src="previews/alert.png" width="356" alt="到点提醒窗">
 </p>
 
 <p align="center">
-  <sub><b>提醒窗</b>：到点自动出现，三个按钮可直接处理，无需再去找入口</sub>
+  <sub><b>提醒窗</b>：到点自动出现，三个按钮可直接处理，无需再去找入口（上图与实际显示尺寸一致）</sub>
 </p>
 
 ---
@@ -157,7 +157,7 @@ pip install Pillow pywin32 pystray
 托盘右键 →「设置…」。修改后点 `保存` **立即生效**，并写入同目录的 `settings.json`。
 
 <p align="center">
-  <img src="previews/settings.png" width="512" alt="设置窗口">
+  <img src="previews/settings.png" width="498" alt="设置窗口">
 </p>
 
 **时长（3 项）**
