@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-久坐提醒 · 升降桌（Sit / Stand Reminder）
+久坐提醒（Sit / Stand Reminder）
 ================================================
-面向升降桌场景的久坐提醒工具：
+帮你按「坐 / 站」节奏交替的久坐提醒工具：
     坐下工作  ->  到点提醒  ->  站立活动  ->  回到坐下  ->  循环
 
 设计原则（对应需求）：
@@ -56,7 +56,7 @@ log = logging.getLogger("sitstand")
 log.info("========== 启动 (frozen=%s) ==========", getattr(sys, "frozen", False))
 
 APP_NAME = "久坐提醒"
-APP_TITLE = "久坐提醒 · 升降桌"
+APP_TITLE = "久坐提醒"
 APP_VERSION = "1.1"
 MUTEX_NAME = "Local\\SitStandReminder_9f3a1c2b"
 
@@ -2379,7 +2379,7 @@ class HelpWindow:
 
 HELP_SEGMENTS = [
     ("h", "这是什么"),
-    ("b", "面向升降桌的久坐提醒工具，按「坐下 → 到点提醒 → 站立活动 → 回到坐下」循环。"
+    ("b", "按「坐下 → 到点提醒 → 站立活动 → 回到坐下」循环的久坐提醒工具。"
           "默认 45 分钟坐 / 8 分钟站（均可调），默认静音、平时不遮挡桌面。"),
     ("h", "怎样开始"),
     ("b", "双击 SitStandReminder.exe（源码版为 Start.bat）即可。启动后自动开始计时，"

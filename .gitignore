@@ -11,6 +11,7 @@ app.log
 # history forever. It is distributed as a Release asset instead.
 # ---------------------------------------------------------------------------
 dist/
+SitStandReminder-portable.zip
 
 # ---------------------------------------------------------------------------
 # Build artifacts (PyInstaller)
