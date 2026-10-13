@@ -1,10 +1,10 @@
-# 久坐提醒 · 升降桌
+# 久坐提醒
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6.svg)](#)
 [![Python](https://img.shields.io/badge/python-3.8%2B-3776AB.svg)](#)
 
-面向升降桌场景的久坐提醒工具。按固定的节奏循环，帮助你在工作间隙自然完成「坐 — 站」的切换：
+一款轻量的久坐提醒工具。按固定节奏循环，帮助你在工作间隙自然地起身活动，而不是一坐就是一整段：
 
 ```
 坐下工作  →  到点提醒  →  站立活动  →  回到坐下  →  循环
@@ -14,33 +14,31 @@
 三个时长均可调整。设计取向可以概括为一句话：**免安装、离线、启动快；默认静音、默认不遮挡；到点一定提醒到你，且操作入口当场就在眼前。**
 
 <p align="center">
-  <img src="previews/strip-expanded.png" width="560" alt="悬浮细条 · 展开态">
+  <img src="previews/strip-expanded.png" width="600" alt="悬浮细条 · 展开态">
 </p>
 
 <p align="center">
-  <sub><b>悬浮细条（展开态）</b>：状态点 + 精确倒计时 + 进度条 + 快捷操作按钮</sub>
+  <sub><b>悬浮细条 · 展开态</b>：状态点 + 精确倒计时 + 进度条 + 快捷操作按钮</sub>
 </p>
 
 <br>
 
 <p align="center">
-  <img src="previews/alert.png" width="480" alt="到点提醒窗">
+  <img src="previews/strip-collapsed.png" width="128" alt="悬浮细条 · 收起态（剩余 80% / 45% / 12%）">
+</p>
+
+<p align="center">
+  <sub><b>悬浮细条 · 收起态</b>：默认贴靠屏幕边缘，按状态色自下而上填充剩余进度</sub>
+</p>
+
+<br>
+
+<p align="center">
+  <img src="previews/alert.png" width="600" alt="到点提醒窗">
 </p>
 
 <p align="center">
   <sub><b>提醒窗</b>：到点自动出现，三个按钮可直接处理，无需再去找入口</sub>
-</p>
-
-<br>
-
-<p align="center">
-  <img src="previews/strip-collapsed.png" width="110" alt="悬浮细条 · 收起态，三档剩余时间">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="previews/settings.png" width="260" alt="设置窗口">
-</p>
-
-<p align="center">
-  <sub><b>左</b>：悬浮细条（收起态，按状态色填充剩余进度）&nbsp;&nbsp;·&nbsp;&nbsp;<b>右</b>：设置窗口</sub>
 </p>
 
 ---
@@ -158,6 +156,10 @@ pip install Pillow pywin32 pystray
 
 托盘右键 →「设置…」。修改后点 `保存` **立即生效**，并写入同目录的 `settings.json`。
 
+<p align="center">
+  <img src="previews/settings.png" width="512" alt="设置窗口">
+</p>
+
 **时长（3 项）**
 
 三个时长均支持**直接输入数字**（点一下输入框即可键入），同时保留 `−` / `+` 按钮微调：
@@ -267,7 +269,7 @@ pyinstaller --noconfirm SitStandReminder.spec
 
 ## English
 
-**Sit / Stand Reminder** — a lightweight standing-desk reminder for Windows.
+**Sit / Stand Reminder** — a lightweight sedentary-work reminder for Windows. Designed around a sit / stand desk workflow, but it works for any desk.
 
 It cycles through *sit → remind → stand & move → sit again*, defaulting to 45 minutes sitting and 8 minutes standing (all three durations are adjustable).
 
