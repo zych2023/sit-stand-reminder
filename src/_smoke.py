@@ -352,18 +352,123 @@ def run():
             # PAD 必须为 0：留一圈透明边就必然被压出一道边
             check("浮窗无透明留白（PAD == 0）", S.StripWindow.PAD == 0,
                   S.StripWindow.PAD)
-            # 真实渲染一张细条，确认四角是透明的（是圆角而不是方块）
+            # 真实渲染一张细条，确认它是「试管」：
+            #   四角透明（圆角）+ 管腔透空 + 管壁是灰的 + 液柱留缝不顶壁
+            #
+            # ⚠️ 不要按固定坐标取单个像素 —— 管子只有 10~16 像素宽，
+            # 取偏一个像素就会落在"已经硬化成完全透明"的边上，导致误判。
+            # 改成**扫中段横向一行，按段分类**，统计出「壁 / 缝 / 液」的宽度。
             ew, eh = S.px(S.StripWindow.EDGE_W), S.px(S.StripWindow.EDGE_H)
-            _rad = max(2, int(ew * 0.42))
-            bar = S.aa_rounded_image(ew, eh, _rad, "#FFFFFF", "#E2E5EB", 1, 4)
+            bar = S.make_tube_image(
+                ew, eh, 0.6, S.liquid_color(0.6, S.C_SIT),
+                wall_ratio=S.StripWindow.TUBE_WALL_RATIO,
+                gap_ratio=S.StripWindow.TUBE_GAP_RATIO,
+                frame_hex=S.StripWindow.TUBE_FRAME)
             bw, bh = bar.size
             corners = [bar.getpixel((0, 0)), bar.getpixel((bw - 1, 0)),
                        bar.getpixel((0, bh - 1)), bar.getpixel((bw - 1, bh - 1))]
             check("收起态为圆角矩形（四角透明）", all(c[3] == 0 for c in corners), corners)
-            mid = bar.getpixel((bw // 2, bh // 2))
-            check("收起态中间是实心的", mid[3] == 255, mid)
-            check("收起态足够细（宽 <= 10 设计像素且 宽 < 高）",
-                  S.StripWindow.EDGE_W <= 10
+
+            def classify(p):
+                """把像素分成 外(.) / 灰壁(F) / 液柱(L)。
+
+                注意：液柱颜色随进度变（<50% 状态色、50~90% 黄、≥90% 珊瑚红），
+                所以**不能按"偏蓝"来判液柱**。改用"饱和 vs 中性"来区分：
+                  · 灰壁 → R≈G≈B（饱和度极低）
+                  · 液柱 → 明显有色（蓝 / 黄 / 红都算）
+                """
+                r, g, b, a = p
+                if a < 40:
+                    return "."                      # 完全透明 → 管腔或窗口外
+                if max(r, g, b) - min(r, g, b) < 30:
+                    return "F"                      # 近中性 → 灰管壁
+                return "L"                          # 有明显色彩 → 液柱
+
+            # 取"液柱中段"那一行（液柱下半部分，避开管底圆角）
+            row = int(bh * 0.75)
+            band = "".join(classify(bar.getpixel((x, row))) for x in range(bw))
+            n_wall = band.count("F")
+            n_liq = band.count("L")
+            check("收起态有灰色管壁", n_wall >= 2, band)
+            check("收起态有液柱", n_liq >= 1, band)
+            # 管腔上方（未填充处）整行都该是透明的 —— 这才是"试管"而非"实心条"。
+            top_row = int(bh * 0.12)
+            top_band = "".join(classify(bar.getpixel((x, top_row)))
+                               for x in range(bw))
+            n_wall_top = top_band.count("F")
+            n_mid_opaque = sum(
+                1 for x in range(bw // 4, bw - bw // 4)
+                if bar.getpixel((x, top_row))[3] > 40)
+            check("收起态管腔透空（未填充处中间透明）", n_mid_opaque == 0,
+                  top_band)
+            check("收起态管腔上方仍有管壁", n_wall_top >= 2, top_band)
+            # 「液柱四周留缝」：液柱左右两侧必须各有一段透明（缝隙），
+            # 不能直接贴到灰色管壁上。
+            liq_cols = [i for i, c in enumerate(band) if c == "L"]
+            gap_ok = False
+            if liq_cols and n_wall >= 2:
+                li = liq_cols[0]
+                lw_end = liq_cols[-1]
+                # 液柱左边第一段、右边第一段都应当是透明
+                left_gap = any(classify(bar.getpixel((x, row))) == "."
+                               for x in range(li - 1, -1, -1)
+                               if x >= 0)
+                right_gap = any(classify(bar.getpixel((x, row))) == "."
+                                for x in range(lw_end + 1, bw))
+                # 更严格：紧邻液柱的那一格必须是透明
+                gap_ok = (li - 1 >= 0
+                          and classify(bar.getpixel((li - 1, row))) == "."
+                          and lw_end + 1 < bw
+                          and classify(bar.getpixel((lw_end + 1, row))) == ".")
+            check("液柱四周留缝（左右都不贴管壁）", gap_ok, band)
+
+            # ---- 新增：颜色必须「纯」----
+            # 背景：8 倍超采样 + LANCZOS 缩回，会让一个"本该是纯灰"的像素带上
+            # 与透明底混合后的残色，实测管壁会渲染出 **15 种色阶**（126~139），
+            # 看起来就是脏。`_harden_alpha` 的色板吸附必须把它压回**唯一一种**灰。
+            opaque_colors = set()
+            for yy in range(bh):
+                for xx in range(bw):
+                    r, g, b, a = bar.getpixel((xx, yy))
+                    if a >= 128:
+                        opaque_colors.add((r, g, b))
+            check("收起态颜色纯净（实心像素只有 2 种色：管壁灰 + 液柱色）",
+                  len(opaque_colors) <= 2,
+                  "实测 %d 种: %s" % (len(opaque_colors),
+                                      sorted(opaque_colors)[:6]))
+            check("管壁灰与配置一致（TUBE_FRAME 未被混色污染）",
+                  tuple(S._hex_to_rgb(S.StripWindow.TUBE_FRAME))
+                  in opaque_colors,
+                  (S.StripWindow.TUBE_FRAME, sorted(opaque_colors)[:6]))
+
+            # ---- 新增：逐行扫描，任何一行液柱都不许贴壁 ----
+            # 上一版为了做"圆顶液面"让液柱向两侧鼓出，结果有 6 行直接顶到管壁，
+            # 把"四周留缝"破掉了。这里全行覆盖，锁死这个回归。
+            touch_rows = 0
+            for yy in range(bh):
+                cols = [xx for xx in range(bw)
+                        if classify(bar.getpixel((xx, yy))) == "L"]
+                if not cols:
+                    continue
+                lo, hi = cols[0], cols[-1]
+                # 左侧：紧邻的第一个不透明像素必须是液柱自己（即左边没有壁）
+                for xx in range(lo - 1, -1, -1):
+                    k = classify(bar.getpixel((xx, yy)))
+                    if k != ".":
+                        if xx >= lo - 1:
+                            touch_rows += 1
+                        break
+                for xx in range(hi + 1, bw):
+                    k = classify(bar.getpixel((xx, yy)))
+                    if k != ".":
+                        if xx <= hi + 1:
+                            touch_rows += 1
+                        break
+            check("液柱任何一行都不贴壁（逐行扫描）", touch_rows == 0,
+                  "贴壁行数=%d" % touch_rows)
+
+            check("收起态足够细（宽 <= 12 设计像素且 宽 < 高）",
+                  S.StripWindow.EDGE_W <= 12
                   and S.StripWindow.EDGE_W < S.StripWindow.EDGE_H,
                   (S.StripWindow.EDGE_W, S.StripWindow.EDGE_H))
             check("卡片比原来窄（CARD_W <= 240 设计像素）",

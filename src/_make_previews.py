@@ -274,33 +274,27 @@ def _knock_out(img):
     return out
 
 
-def _bar_tile(frac, ew, eh, radius, color):
-    """复现 _render_edge 的细条：白底圆角矩形 + 从下往上按比例填色。
+def _bar_tile(frac, ew, eh, radius, color, st=None):
+    """复现 `_render_edge` 的**试管**细条（粗灰管壁 + 透明管腔 + 内部细液柱）。
 
-    ⚠️ 这里**故意不传 opaque_bg**。`aa_rounded_image` 的 `opaque_bg` 会把 alpha
-    二值化成 0/255（那是为了配合 Tk 的 `-transparentcolor` 精确抠色），
-    但预览图要放大好几倍，二值化后的硬边一放大就是明显的锯齿。
-    不传它就能保留天然的抗锯齿过渡，放大后依然平滑。
+    直接调产品函数 `S.make_tube_image()` 出图，保证预览和实机**完全一致**
+    （包括边缘的 alpha 硬化，所以放大后也是干净利落的硬边）。
 
-    填充部分用**底条的圆角轮廓做遮罩**，让色块严丝合缝贴着白条，
-    底部不会露出白色月牙（真实代码是直接叠一张裁切过的圆角矩形，
-    在高倍放大下会看到白边的毛刺）。
+    液柱颜色由 `S.liquid_color()` 按进度算（和实机同一条取色逻辑），
+    所以这张对照图顺便就能看出「蓝 → 黄 → 珊瑚红」的三段渐变。
+
+    Args:
+        frac: **剩余**比例（0.80 = 还剩 80%，液柱只填两成）。
     """
-    base = S.aa_rounded_image(ew, eh, radius, "#FFFFFF", S.C_BORDER, 1, 8)
-    fh = int(eh * frac)
-    if fh >= 1:
-        # 整条填色图（同圆角），只取底部 fh 高度，再**用底条 alpha 当遮罩**裁剪，
-        # 这样蓝色严丝合缝贴着白条轮廓，底部不会露白月牙。
-        shape = S.aa_rounded_image(ew, eh, radius, color, None, 0, 8)
-        top = eh - fh
-        band = Image.new("RGBA", (ew, eh), (0, 0, 0, 0))
-        band.paste(shape.crop((0, top, ew, eh)), (0, top))
-        # 只保留底条轮廓内 + 底部 fh 区域
-        shape_mask = base.split()[3]
-        band_mask = Image.new("L", (ew, eh), 0)
-        band_mask.paste(shape_mask.crop((0, top, ew, eh)), (0, top))
-        base = Image.composite(band, base, band_mask)
-    return base
+    wall_r = getattr(st, "TUBE_WALL_RATIO", 0.19) if st else 0.19
+    gap_r = getattr(st, "TUBE_GAP_RATIO", 0.18) if st else 0.18
+    frame = getattr(st, "TUBE_FRAME", "#9AA0A8") if st else "#9AA0A8"
+    # frac 传"已用掉的进度"：细条是从下往上长，所以 fill = 1 - 剩余
+    fill_frac = 1.0 - frac
+    liq = S.liquid_color(fill_frac, color)
+    return S.make_tube_image(ew, eh, fill_frac, liq,
+                             wall_ratio=wall_r, gap_ratio=gap_r,
+                             frame_hex=frame)
 
 
 def _card_preview(st, app, ss=3):
@@ -452,18 +446,17 @@ def shots(app, root):
     # =====================================================================
     # 2. 悬浮条 · 收起态（三档剩余时间）
     #
-    # 这张不抓窗口，直接用 Pillow 复现 _render_edge 的贴图。
-    # 原因：收起条本身只是 aa_rounded_image() 画出来的一张位图，
-    # 而 PrintWindow 会把圆角外的透明键色渲染成黑色，抠色时抗锯齿边缘
-    # 会被误判 → 圆角变成锯齿尖角。直接离屏渲染拿到的就是原始位图，
-    # 圆角平滑、像素级还原。
+    # 这张不抓窗口，直接用产品函数 make_tube_image() 离屏复现。
+    # 原因：收起条本身就是一张贴图，而 PrintWindow 会把圆角外的透明键色
+    # 渲染成黑色，抠色时抗锯齿边缘会被误判 → 圆角变成锯齿尖角。
+    # 直接离屏渲染拿到的就是原始位图，圆角平滑、像素级还原。
     # =====================================================================
     ew, eh = st.EDGE_W, st.EDGE_H
     radius = max(2, int(ew * 0.42))
     tiles = []
     for frac in (0.80, 0.45, 0.12):
-        tiles.append(_bar_tile(frac, ew, eh, radius, S.C_SIT))
-        print("  collapsed frac=%.2f (offscreen Pillow)" % frac)
+        tiles.append(_bar_tile(frac, ew, eh, radius, S.C_SIT, st))
+        print("  collapsed frac=%.2f (tube, offscreen Pillow)" % frac)
 
     # 拼成一张对照图（用 alpha_composite，圆角外的透明区域自然露出底色）
     Z = 6

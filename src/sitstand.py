@@ -231,6 +231,37 @@ def darken(c, t=0.12):
     return mix(c, "#000000", t)
 
 
+# ---- 收起态「试管」液柱的配色 -----------------------------------------------
+# 三段式（用户定稿）：
+#   < 50%   : 状态基色（坐姿蓝 / 站姿青碧）
+#   50–90%  : 由基色渐变到黄，越接近 90% 越深（亮黄 → 琥珀）
+#   ≥ 90%   : 由琥珀渐变到提醒色，到 100% 完全变成柔珊瑚红
+#
+# 只有「黄色之前那一档」的两个端点色是硬编码的常量，它们是纯粹的中性黄，
+# 不属于任何一个状态色系，所以不算"硬编码同色系深浅档"（见 C_SIT/C_STAND 约定）。
+_LIQ_YELLOW = "#F2C744"        # 50% 起点：亮黄
+_LIQ_AMBER = "#C98A16"         # 90% 终点：琥珀
+
+
+def liquid_color(frac, base, alert=C_ALERT):
+    """按剩余进度返回收起态液柱的颜色。
+
+    Args:
+        frac: 剩余比例，0.0–1.0（越大越接近到点）。
+        base: 当前状态色（坐姿蓝 / 站姿青碧）。
+        alert: 提醒色，默认 C_ALERT。
+    """
+    try:
+        f = max(0.0, min(1.0, float(frac)))
+    except (TypeError, ValueError):
+        f = 0.0
+    if f < 0.5:
+        return base
+    if f < 0.9:
+        return mix(_LIQ_YELLOW, _LIQ_AMBER, (f - 0.5) / 0.4)
+    return mix(_LIQ_AMBER, alert, (f - 0.9) / 0.1)
+
+
 def pick_font_file(size, bold=True):
     candidates = [
         r"C:\Windows\Fonts\segoeuib.ttf" if bold else r"C:\Windows\Fonts\segoeui.ttf",
@@ -509,26 +540,185 @@ def aa_rounded_image(w, h, radius, fill, outline=None, border=1, super_ratio=4,
     w, h = max(1, int(round(w))), max(1, int(round(h)))
     r = max(0, int(round(radius)))
     over = 0 if border <= 0 else 1
+
+    # `fill=None` → **只画描边、内部全透明**（"试管管壁"用；不给 fill 塞占位色，
+    # 否则管腔会被填成那个颜色，就看不出"空心"了）。
+    fill_rgba = (_hex_to_rgb(fill) + (255,)) if fill else None
+    outline_rgba = (_hex_to_rgb(outline) + (255,)) if outline else None
+
     if super_ratio > 1:
         bw, bh = w * super_ratio, h * super_ratio
         img = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
         inset = over * super_ratio
         d.rounded_rectangle([inset, inset, bw - 1 - inset, bh - 1 - inset],
-                            radius=r * super_ratio, fill=_hex_to_rgb(fill) + (255,),
-                            outline=(_hex_to_rgb(outline) + (255,)) if outline else None,
+                            radius=r * super_ratio, fill=fill_rgba,
+                            outline=outline_rgba,
                             width=border * super_ratio if outline else 0)
         img = img.resize((w, h), Image.LANCZOS)
     else:
         img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
         d.rounded_rectangle([over, over, w - 1 - over, h - 1 - over], radius=r,
-                            fill=_hex_to_rgb(fill) + (255,),
-                            outline=(_hex_to_rgb(outline) + (255,)) if outline else None,
+                            fill=fill_rgba, outline=outline_rgba,
                             width=border if outline else 0)
     if opaque_bg is not None:
         img = flatten_to_key(img, opaque_bg)
     return img
+
+def _harden_alpha(img, thresh=140, palette=None):
+    """把抗锯齿的边缘**硬化**：alpha 二值化 + RGB 吸附到合法色板，去掉"发虚/发脏"。
+
+    为什么需要（两个独立的脏，必须都治）：
+
+    1. **边缘发虚**：`make_tube_image` 用 8 倍超采样 + LANCZOS 缩回，缩回后每条边
+       都带一圈**半透明过渡像素**。管子只有 11~16px 宽，这圈过渡几乎占满整个
+       管壁/缝隙，看起来就是"糊的"。
+       → 治：按 alpha 二值化，`alpha < thresh` 判为外部（全透明），否则拉满 255。
+
+    2. **颜色发脏（更隐蔽）**：只治 alpha 是不够的。LANCZOS 缩回时，一个"最终应该
+       是纯灰"的像素，其 RGB 也可能是**灰和透明底的混合**，于是管壁本该只有
+       `#7F7F7F` 一种灰，实测却渲染出 **15 种色阶**（126~139），还整体偏亮。
+       这正是用户说的"看着脏又乱"。
+       → 治：把每个不透明像素的 RGB **吸附到最近的合法色**（色板 = 管壁色 + 液柱色）。
+
+    做法合起来：alpha 二值化 → 对留下的像素做**最近邻调色板吸附**。
+
+    ⚠️ 与 `flatten_to_key` 的区别：那个是给 Tk `-transparentcolor` 用的，会把
+    "外部"像素涂成**键色**（#010203）；这里只是把 alpha 归零、把颜色收拢，
+    因为预览图/合成图不需要键色，透明就是真透明。
+
+    Args:
+        img: RGBA 图。
+        thresh: alpha 阈值，>= 该值视为实心。
+        palette: 合法颜色的 RGB 列表；None 则只做 alpha 硬化（旧行为）。
+    """
+    from PIL import Image as _I
+    rgba = img.convert("RGBA")
+    a = rgba.getchannel("A").point(lambda v: 255 if v >= thresh else 0)
+    out = rgba.copy()
+    out.putalpha(a)
+    if palette:
+        pal = [tuple(c) for c in palette]
+        px = out.load()
+        w, h = out.size
+        # 直接逐像素吸附：图很小（≥16×150），用查找表更快
+        lut = {}
+        for y in range(h):
+            for x in range(w):
+                r, g, b, al = px[x, y]
+                if al == 0:
+                    continue
+                key = (r, g, b)
+                hit = lut.get(key)
+                if hit is None:
+                    hit = min(pal, key=lambda c: (c[0]-r)**2 + (c[1]-g)**2 + (c[2]-b)**2)
+                    lut[key] = hit
+                if hit != key:
+                    px[x, y] = (hit[0], hit[1], hit[2], al)
+    return out
+
+
+def make_tube_image(w, h, frac, fill_hex, wall_ratio=0.18, gap_ratio=0.07,
+                    frame_hex=None, ss=8, harden=True):
+    """画一根「试管」：**粗灰管壁 + 透明管腔 + 内部细液柱**。
+
+    这是收起态悬浮条的整体贴图（管壁、液柱一次性画在同一张图上再交给 Tk），
+    所以不存在"外壳和液柱对不齐"的问题。
+
+    几何按 **外框宽 w 的比例** 给定（见 StripWindow.TUBE_* 常量），
+    但会先**换算成整数像素预算**再画，保证"缝隙"永远至少 1 设备像素：
+        · 管壁  = max(1, round(w * wall_ratio))
+        · 缝隙  = max(1, round(w * gap_ratio))      ← 关键：不能小于 1px，否则看不见
+        · 液柱  = max(1, w - 2*(管壁 + 缝隙))       ← 由预算倒推，保证不溢出
+    液柱是**两端圆角的小胶囊**，从管底往上长；高度 = 可用内高 * frac。
+
+    ⚠️ 必须在 `ss` 倍超采样空间里画（设备像素尺度下 1px 圆角全是锯齿）；
+    而且**液柱和管壁要画在同一张图上**，不能拆成两张再拼 ——
+    拆分之后液柱位置只能靠猜管腔边界，小尺寸下必然溢出管壁。
+
+    `harden=True` 会在缩回后做一次** alpha 硬化**（见 `_harden_alpha`），
+    把 LANCZOS 留下的半透明过渡边去掉，得到"干净利落"的硬边。
+    想要柔和过渡（例如做更大幅面的插画）时传 False。
+
+    Args:
+        w, h: 外框的设备像素尺寸。
+        frac: 液位，0.0–1.0。
+        fill_hex: 液柱颜色（已由 liquid_color() 算好）。
+        ss: 超采样倍数。
+        harden: 是否硬化 alpha 边缘（默认 True）。
+
+    Returns:
+        RGBA 图（尺寸 == (w, h)），**不压平**（管腔要能透出桌面）。
+    """
+    from PIL import Image as _I
+    w, h = max(3, int(round(w))), max(3, int(round(h)))
+    frame_hex = frame_hex or "#9AA0A8"
+
+    # ---- 整数像素预算（先定各段占几像素，再画）----
+    wall_px = max(1, int(round(w * wall_ratio)))
+    gap_px = max(1, int(round(w * gap_ratio)))
+    liq_px = w - 2 * (wall_px + gap_px)
+    if liq_px < 1:
+        # 宽太窄：让液柱至少占 1px，从缝隙里匀
+        gap_px = max(1, gap_px - 1)
+        liq_px = max(1, w - 2 * (wall_px + gap_px))
+
+    W, H = w * ss, h * ss
+    img = _I.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+
+    wall = wall_px * ss
+    gap = gap_px * ss
+    lw = liq_px * ss
+
+    # 外壳胶囊：把整张图当作一个圆角矩形（圆角 = 半宽），管壁沿它的边描一圈。
+    # 描边路径要相对**外缘**内收 wall/2，外缘才正好落在 0..W-1。
+    r_shell = (w / 2.0) * ss                     # 外壳圆角半径
+    d.rounded_rectangle(
+        [wall / 2.0, wall / 2.0, W - 1 - wall / 2.0, H - 1 - wall / 2.0],
+        radius=max(0.0, r_shell - wall / 2.0),
+        outline=_hex_to_rgb(frame_hex) + (255,),
+        width=int(wall))
+
+    # ---- 2. 液柱：贴管底往上长的「小胶囊」----
+    #
+    # ⚠️ 关键：液柱的可用区域不是「矩形内缩 wall+gap」，而是**管腔这个圆角矩形
+    # 内缩 gap**。因为外壳两端是**半圆帽**（半径 = 半宽 ≈ 8px），矩形内缩会把
+    # 液柱的平底直接怼到半圆帽上 —— 底部就没有缝隙了（这就是上一版的毛病）。
+    # 正解：液柱自己也是一个圆角矩形，圆角 = r_shell - wall - gap（与管腔同心），
+    # 上下边界则各留 gap。
+    f = max(0.0, min(1.0, float(frac)))
+    y_top = wall + gap                            # 管腔顶端（已含缝隙）
+    y_bot = H - wall - gap                        # 管腔底端（已含缝隙）
+    avail = y_bot - y_top
+    lh = avail * f
+    if lh >= 2.0:
+        lx = int(round((W - lw) / 2.0))           # 水平居中
+        ly = int(round(y_bot - lh))
+        # 液柱圆角 = 外壳圆角 - 管壁 - 缝隙，保证与管腔同心；
+        # 再按实际宽高夹取，避免液面很矮时圆角超过半高。
+        #
+        # ⚠️ 不要试图给液面做"圆顶/半月面"。测过：要肉眼看出圆顶，圆头必须向
+        # 两侧**鼓出至少 1 设备像素**，而本尺寸下缝隙总共只有 3px，鼓出去就顶到
+        # 管壁，"四周留缝"立刻破掉（实测有 6 行贴壁）。
+        # 而且用户给的参考图本身就是「壁2.5 | 缝1 | 液柱4.5 | 缝1 | 壁3」——
+        # 液柱只有 4.5px、缝隙只有 1px，本来就没有做圆顶的余量。
+        # 所以这里老老实实按「同心圆角胶囊」画，保证缝隙永远成立。
+        r_liq = max(0.5, min(r_shell - wall - gap, lw / 2.0, lh / 2.0))
+        d.rounded_rectangle(
+            [lx, ly, lx + lw - 1, y_bot - 1],
+            radius=r_liq,
+            fill=_hex_to_rgb(fill_hex) + (255,))
+
+    out = img.resize((w, h), _I.LANCZOS)
+    if harden:
+        # 色板 = 唯一合法的两种实心色：管壁灰 + 液柱色。
+        # 加进去之后，管壁就只剩一种灰，不会再有 15 个色阶的"脏"。
+        out = _harden_alpha(out, palette=[_hex_to_rgb(frame_hex),
+                                          _hex_to_rgb(fill_hex)])
+    return out
+
 
 def flatten_to_key(img, fill_hex=None, key_hex=None, thresh=96):
     """把 RGBA 图压平到「透明键色」体系：每个像素要么完全实色、要么完全等于键色。
@@ -935,8 +1125,20 @@ class NumberField(tk.Frame):
 class StripWindow:
     # ---- 尺寸（设计稿像素，运行时经 px() 按 DPI 缩放）--------------------
     CARD_W, CARD_H = 236, 40      # 展开态卡片
-    EDGE_W, EDGE_H = 8, 100       # 收起态的细长圆角矩形（宽 × 高）
+    # 收起态细条：11 设计像素 → 150% 下 16 设备像素。
+    # 这个宽度是照用户参考图标定出来的：只有 ≥16 设备像素，才能同时容下
+    # 「3px 灰管壁 + 1.5px 缝隙 + 6px 液柱」这套结构；再窄缝隙就会被抗锯齿吃掉。
+    EDGE_W, EDGE_H = 11, 100      # 收起态的细长圆角矩形（宽 × 高）
     EDGE_GAP = 3                  # 收起态距屏幕边缘的呼吸缝
+
+    # ---- 收起态「试管」的管壁 / 缝隙（**按外框宽的比例**，随 EDGE_W 缩放）----
+    # 比例照用户参考图标定（参考样例 14px 宽实测：管壁≈2.5px、缝隙≈1px、液柱≈4.5px）。
+    # 只有"管壁"和"缝隙"两个比例需要给定，**液柱宽自动由减法推**：
+    #     液柱 = EDGE_W - 2*(管壁 + 缝隙)
+    # 这样既能保证"液柱四周都留缝"，也永远不会溢出管壁。
+    TUBE_WALL_RATIO = 0.19        # 管壁厚 = EDGE_W * 该值（11px 设计 → 16 设备 → 3px 壁）
+    TUBE_GAP_RATIO = 0.18         # 缝隙   = EDGE_W * 该值（16 设备 → 3px 缝，明显留白）
+    TUBE_FRAME = "#9AA0A8"        # 灰色管壁（参考图是中性灰 127，但实际偏重，调浅一档）
     # ⚠️ PAD 必须是 0：窗口四周只要留一圈透明（key colour）边，系统投影/合成
     # 就会在那圈上压出一道近黑色的描边（实测窗口外沿 1~2px = (23,24,26)）。
     # 所以窗口尺寸直接等于内容尺寸，靠圆角+描边定轮廓。
@@ -1442,56 +1644,46 @@ class StripWindow:
             self._hits["body"] = (0, 0, self.EDGE_W, self.EDGE_H)
 
     def _render_edge(self):
-        """收起态：一个**完整的细长圆角矩形**，里面按百分比填色。
+        """收起态：一条「试管」——**粗灰管壁 + 透明管腔 + 内部细液柱**。
 
-        收起态窗口尺寸 == 圆角矩形本身的尺寸（PAD=0），所以这里直接铺满整窗，
-        不留任何透明边 —— 透明边会被系统合成为一道近黑描边（见 configure_floating_window）。
+        结构（照用户参考图标定，见 `make_tube_image` 的文档）：
+          · 管壁：一圈**明显的中灰粗描边**（不是浅灰/白），管腔内部**全透明**；
+          · 液柱：一根**明显细于管腔**的小胶囊，两端圆角，从管底往上长；
+          · 液柱四周（含左右两侧）都留一条**等宽缝隙**，这才是"试管"的观感；
+          · 颜色由 `liquid_color()` 按进度三段式取（状态色 → 黄 → 珊瑚红）。
+
+        ⚠️ 管壁 + 液柱必须画在**同一张贴图**里（`make_tube_image`），
+        不能拆成"外壳图 + 液柱图"两张再拼：拆开之后液柱的位置只能靠猜管腔边界，
+        8px 宽下猜不准就一定会溢出管壁（这就是上一版"液体溢出+变矩形"的原因）。
+
+        收起态窗口尺寸 == 圆角矩形本身（PAD=0），所以这里直接铺满整窗。
         """
         c = self.canvas
-        # 用当前窗口实际尺寸，不能用固定的 WIN_W/WIN_H
-        W = getattr(self, "_cur_w", self.WIN_W)
-        H = getattr(self, "_cur_h", self.WIN_H)
         x0 = self.PAD
         y0 = self.PAD
-        color, _label = self._state()
 
-        # 底：白色细长圆角矩形。圆角半径取宽度的一小部分，保持"长条"观感。
-        # 加一圈极淡的边：条越窄，在深色/花哨壁纸上越容易糊掉，有这一圈就能定住轮廓。
-        radius = max(2, int(self.EDGE_W * 0.42))
-        key = ("edge9", int(self.EDGE_W), int(self.EDGE_H), radius)
+        ew, eh = self.EDGE_W, self.EDGE_H
+        frac = self._progress()
+        base, _label = self._state()
+        color = liquid_color(frac, base)
+
+        # 缓存键要把"所有影响画面的量"都带上，否则改了比例/进度不会重画。
+        # 液位只取整到 1/256，避免每 tick 都因为浮点抖动而爆缓存。
+        key = ("tube", int(ew), int(eh), int(round(frac * 256)), color,
+               round(self.TUBE_WALL_RATIO, 4), round(self.TUBE_GAP_RATIO, 4))
         cache = self._aa_cache
         img = cache.get(key)
         if img is None:
             img = ImageTk.PhotoImage(
-                aa_rounded_image(self.EDGE_W, self.EDGE_H, radius, "#FFFFFF",
-                                 C_BORDER, 1, 4, opaque_bg="#FFFFFF"))
-            if len(cache) > 40:
+                make_tube_image(ew, eh, frac, color,
+                                wall_ratio=self.TUBE_WALL_RATIO,
+                                gap_ratio=self.TUBE_GAP_RATIO,
+                                frame_hex=self.TUBE_FRAME))
+            if len(cache) > 160:
                 cache.clear()
             cache[key] = img
         c.create_image(x0, y0, image=img, anchor="nw")
 
-        # 剩余时间的颜色填充：从下往上长，形状与底完全一致（同半径）
-        frac = self._progress()
-        fill_h = int(self.EDGE_H * frac)
-        if fill_h >= 2:
-            # 填充块也是透明窗口里的内容，必须压平（否则边缘会有深色描边）。
-            # 按白色压平：它叠在底下那张已压平的白条之上，白色过渡最自然。
-            full = aa_rounded_image(self.EDGE_W, self.EDGE_H, radius, color,
-                                    None, 0, 4, opaque_bg="#FFFFFF")
-            crop = Image.new("RGBA", (self.EDGE_W, self.EDGE_H), (0, 0, 0, 0))
-            crop.paste(full.crop((0, self.EDGE_H - fill_h, self.EDGE_W, self.EDGE_H)),
-                       (0, self.EDGE_H - fill_h))
-            fkey = ("edgefill9", int(self.EDGE_W), int(self.EDGE_H),
-                    int(fill_h), radius, color)
-            fimg = cache.get(fkey)
-            if fimg is None:
-                fimg = ImageTk.PhotoImage(crop)
-                if len(cache) > 80:
-                    cache.clear()
-                cache[fkey] = fimg
-            c.create_image(x0, y0, image=fimg, anchor="nw")
-
-    
     def _render_card(self):
         c = self.canvas
         P = self.PAD
