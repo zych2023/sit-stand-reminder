@@ -1,0 +1,57 @@
+# ---------------------------------------------------------------------------
+# Runtime state written next to the executable / script by the app itself.
+# These contain the local user's own preferences and must never be committed.
+# ---------------------------------------------------------------------------
+settings.json
+app.log
+
+# ---------------------------------------------------------------------------
+# Packaged portable build.
+# Not committed on purpose: ~25 MB of binaries would bloat the repository
+# history forever. It is distributed as a Release asset instead.
+# ---------------------------------------------------------------------------
+dist/
+
+# ---------------------------------------------------------------------------
+# Build artifacts (PyInstaller)
+# ---------------------------------------------------------------------------
+build/
+_out*/
+_build*/
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.python-version
+
+# Local interpreter overrides used by Start.bat / Debug.bat
+src/python_path.txt
+src/pythonw_path.txt
+
+# ---------------------------------------------------------------------------
+# Editor / IDE
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*~
+
+# ---------------------------------------------------------------------------
+# OS
+# ---------------------------------------------------------------------------
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ---------------------------------------------------------------------------
+# Tooling scratch files used while developing this project
+# ---------------------------------------------------------------------------
+_smoke_out.txt
+_run_out.txt
+_preview_*.png
