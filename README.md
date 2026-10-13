@@ -183,8 +183,7 @@ SitStandReminder/
 │   ├── app.ico                 ← 图标
 │   ├── soft_chime.wav          ← 提示音
 │   ├── _smoke.py               ← 自检套件（71 项）
-│   ├── _shot.py                ← 截图脚本
-│   └── _preview_strip.py       ← 离屏预览图生成
+│   └── _make_previews.py       ← 离屏生成 README 用的预览图（零打扰）
 ├── previews/                   ← 界面截图
 │   ├── strip-expanded.png
 │   ├── strip-collapsed.png
